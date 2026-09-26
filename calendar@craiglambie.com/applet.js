@@ -1,6 +1,6 @@
 /*
- *   World Clock Calendar applet calendar@simonwiles.net
- *   Fork of the Cinnamon calendar applet with support for displaying multiple timezones.
+ *   World Clock Calendar Fork of applet calendar@simonwiles.net
+ *   Fork Simon Wiles Fork of the Cinnamon calendar applet with support for displaying multiple timezones.
  *   version 1.2
  */
 
@@ -8,7 +8,10 @@
 /* exported _onVertSepRepaint, main */
 "use strict";
 
-const EXTENSION_UUID = "calendar@simonwiles.net";
+const Gettext = imports.gettext;
+const _ = Gettext.gettext;
+
+const EXTENSION_UUID = "calendar@craiglambie.com";
 const APPLET_DIR = imports.ui.appletManager.appletMeta[EXTENSION_UUID].path;
 
 const Applet = imports.ui.applet;
@@ -56,6 +59,8 @@ MyApplet.prototype = {
 
     _init: function(orientation, panel_height, instance_id) {
         Applet.TextApplet.prototype._init.call(this, orientation, panel_height, instance_id);
+        
+        this.instance_id = instance_id;
 
         try {
 
@@ -94,29 +99,69 @@ MyApplet.prototype = {
             separator.setColumnWidths(1);
             vbox.add(separator.actor, {y_align: St.Align.END, expand: true, y_fill: false});
 
+
+            //world clockcs add function
+            // World clocks add function
             let addWorldClocks = Lang.bind(this, function() {
+
+                if (!this.worldclocks || !Array.isArray(this.worldclocks)) {
+                    this.worldclocks = [];
+                }
+                
                 if (this._worldclocks_box) { this._worldclocks_box.destroy(); }
                 this._worldclocks_box = new St.BoxLayout({vertical: true});
-                // add to the calendarArea vbox instead of a new worldclocksArea so that the calendar resizes to the
-                //  full width of the applet drop-down (in case the world clocks are very wide!)
                 vbox.add(this._worldclocks_box);
 
                 this._worldclocks = [];
                 this._worldclock_labels = [];
-                var i;
-                for (i in this.worldclocks) { this._worldclocks[i] = this.worldclocks[i].split("|"); }
-                for (i in this._worldclocks) {
-                    this._worldclocks[i][1] = GLib.TimeZone.new(this._worldclocks[i][1]);
 
+                // Clean invalid entries (iterate backwards to avoid index shifting)
+                for (let i = this.worldclocks.length - 1; i >= 0; i--) {
+                    if (typeof this.worldclocks[i] !== 'string') {
+                        global.logError(`Invalid worldclocks entry at index ${i}:`, this.worldclocks[i]);
+                        this.worldclocks.splice(i, 1); // Remove invalid entries
+                    }
+                }
+
+                
+                // Save cleaned worldclocks if any were removed
+                this.settings.setValue('worldclocks', this.worldclocks);
+
+                // Process valid entries
+                for (let i = 0; i < this.worldclocks.length; i++) {
+                    // Split into [label, tzString]
+                    let parts = String(this.worldclocks[i]).split("|");
+                    // Convert tzString to GLib.TimeZone object
+                    let label = parts[0] || "Untitled";
+                    let tzString = parts.length > 1 ? parts[1] : null;
+                    let tzObj;
+                    try {
+                        tzObj = tzString ? GLib.TimeZone.new(tzString) : GLib.TimeZone.new_local();
+                    } catch (e) {
+                        tzObj = GLib.TimeZone.new_local();
+                    }
+                    this._worldclocks[i] = [label, tzObj];
+
+                    // Create UI elements
                     let tz = new St.BoxLayout({vertical: false});
-                    let tz_label = new St.Label({ style_class: "datemenu-date-label", text: this._worldclocks[i][0] });
+                    let tz_label = new St.Label({ style_class: "datemenu-date-label", text: label });
                     tz.add(tz_label, {x_align: St.Align.START, expand: true, x_fill: false});
                     this._worldclock_labels[i] = new St.Label({ style_class: "datemenu-date-label" });
                     tz.add(this._worldclock_labels[i], {x_align: St.Align.END, expand: true, x_fill: false});
                     this._worldclocks_box.add(tz);
                 }
-                this.max_length = this._worldclocks.reduce(function (a, b) { return a[0].length > b[0].length ? a : b; })[0].length;
+
+                // Calculate max_length once, outside the loop
+                if (this._worldclocks.length > 0) {
+                    this.max_length = this._worldclocks.reduce(function (a, b) { 
+                        return a[0].length > b[0].length ? a : b; 
+                    })[0].length;
+                } else {
+                    this.max_length = 0;
+                }
             });
+
+
 
             // Track changes to clock settings
             this._dateFormat = DEFAULT_FORMAT;
@@ -132,11 +177,11 @@ MyApplet.prototype = {
             // https://bugzilla.gnome.org/show_bug.cgi?id=655129
             this._upClient = new UPowerGlib.Client();
             try {
-                this._upClient.connect("notify-resume", this._updateClockAndDate);
-                this._upClient.connect("notify-resume", addWorldClocks);
+                this._upClient.connect("notify-resume", Lang.bind(this, this._updateClockAndDate));
+                this._upClient.connect("notify-resume", Lang.bind(this, addWorldClocks));
             } catch (e) {
-                this._upClient.connect("notify::resume", this._updateClockAndDate);
-                this._upClient.connect("notify::resume", addWorldClocks);
+                this._upClient.connect("notify::resume", Lang.bind(this, this._updateClockAndDate));
+                this._upClient.connect("notify::resume", Lang.bind(this, addWorldClocks));
             }
 
             // Start the clock
@@ -171,31 +216,47 @@ MyApplet.prototype = {
         Util.spawnCommandLine("cinnamon-settings calendar");
     },
 
-    _updateClockAndDate: function() {
-        let displayDate = GLib.DateTime.new_now_local();
-        let dateFormattedFull = displayDate.format(this._dateFormatFull);
-        let label_string = displayDate.format(this._dateFormat);
 
-        if (!label_string) {
-            global.logError("Calendar applet: bad time format string - check your string.");
-            label_string = "~CLOCK FORMAT ERROR~ " + displayDate.toLocaleFormat(DEFAULT_FORMAT);
-        }
-        this.set_applet_label(label_string);
+    //Update Clock function
+   _updateClockAndDate: function() {
 
-        let tooltip = [];
-        tooltip.push(dateFormattedFull);
-        for (var i in this._worldclocks) {
-            let tz = this._get_world_time(displayDate, this._worldclocks[i][1]);
-            this._worldclock_labels[i].set_text(tz);
-            tooltip.push(rpad(this._worldclocks[i][0], "\xA0", this.max_length + 10) + tz);
-        }
-        this.set_applet_tooltip(tooltip.join("\n"));
+            let tz = null;
+            if (this._worldclocks && this._worldclocks.length > 0 && this._worldclocks[0][1]) {
+                tz = this._worldclocks[0][1]; // This is a GLib.TimeZone object
+            }  else {
+                tz = GLib.TimeZone.new_local(); // Fallback to system timezone
+            }
 
-        if (dateFormattedFull !== this._lastDateFormattedFull) {
-            this._date.set_text(dateFormattedFull);
-            this._lastDateFormattedFull = dateFormattedFull;
-        }
-    },
+            
+            let displayDate = GLib.DateTime.new_now(tz);
+           
+            this._worldclocks = this._worldclocks || [];
+
+            let dateFormattedFull = displayDate.format(this._dateFormatFull);
+            let label_string = displayDate.format(this._dateFormat);
+            if (!label_string) {
+                global.logError("Calendar applet: bad time format string - check your string.");
+                label_string = "~CLOCK FORMAT ERROR~ " + displayDate.format(DEFAULT_FORMAT);
+            }
+
+            this.set_applet_label(label_string);
+
+            let tooltip = [];
+            tooltip.push(dateFormattedFull);
+            for (let i = 0; i < this._worldclocks.length; i++) {
+                let worldTime = this._get_world_time(displayDate, this._worldclocks[i][1]);
+                this._worldclock_labels[i].set_text(worldTime);
+                tooltip.push(rpad(this._worldclocks[i][0], "\xA0", this.max_length + 10) + worldTime);
+            }
+
+
+            this.set_applet_tooltip(tooltip.join("\n"));
+            if (dateFormattedFull !== this._lastDateFormattedFull) {
+                this._date.set_text(dateFormattedFull);
+                this._lastDateFormattedFull = dateFormattedFull;
+            }
+        },
+
 
     _updateClockAndDatePeriodic: function() {
         this._updateClockAndDate();

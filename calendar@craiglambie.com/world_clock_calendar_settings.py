@@ -217,16 +217,37 @@ class SettingsWindow(Gtk.Window):
         self.liststore_worldclocks.remove(
             self.treeview.get_selection().get_selected()[1])
 
+    #def _save_settings(self):
+    #    self.settings.set(
+    #        'worldclocks',
+    #        ['|'.join(row) for row in self.liststore_worldclocks]
+    #    )
+    #    self.settings.set(
+    #        'worldclocks-timeformat',
+    #        self.entry_timeformat.get_text()
+    #    )
+    #    self.settings.save()
+
+    # insert CraigLambie
+
     def _save_settings(self):
-        self.settings.set(
-            'worldclocks',
-            ['|'.join(row) for row in self.liststore_worldclocks]
-        )
-        self.settings.set(
-            'worldclocks-timeformat',
-            self.entry_timeformat.get_text()
-        )
-        self.settings.save()
+    # Validate and sanitize worldclocks entries
+    cleaned_worldclocks = []
+    for row in self.liststore_worldclocks:
+        # Ensure each row is a tuple/list of two strings
+        if (isinstance(row, (list, tuple)) and 
+            len(row) == 2 and 
+            isinstance(row[0], basestring) and 
+            isinstance(row[1], basestring)):
+            cleaned_worldclocks.append('|'.join(row))
+        else:
+            print("Skipping invalid row: {}".format(row))
+
+    # Save sanitized data
+    self.settings.set('worldclocks', cleaned_worldclocks)
+    self.settings.set('worldclocks-timeformat', self.entry_timeformat.get_text())
+    self.settings.save()
+    #end insert
 
     def _exit_application(self, *args):
         try:
